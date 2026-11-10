@@ -160,6 +160,66 @@ body[data-theme="dark"] .planchoice.active{background:#3e3571;color:#e6deff;bord
  function historicalMonths(){const y=internshipYear(),now=ymdm(today),months=[];for(let m=8;m<=12;m++){const key=`${y}-${pad(m)}`;if(key<now)months.push(key)}return months}
  function monthDaily(month){return Object.entries(state.entries).filter(([d])=>ymdm(d)===month).reduce((a,[,v])=>a+num(v.hours),0)}
  function renderHistory(){const months=historicalMonths(),root=$('historyGrid');root.innerHTML='';$('historicalYear').textContent=`Ciclo ${internshipYear()}/${internshipYear()+1}`;let total=0;for(const key of months){const daily=monthDaily(key),saved=Object.prototype.hasOwnProperty.call(state.monthTotals,key)?num(state.monthTotals[key]):daily+num(state.balances[key]);total+=saved;const field=document.createElement('div');field.className='historyfield';const label=document.createElement('label');const id='history-'+key;label.htmlFor=id;label.textContent=monthFmt(key);const input=document.createElement('input');input.type='number';input.id=id;input.min='0';input.max='744';input.step='0.25';input.placeholder='Ex.: 80';input.inputMode='decimal';input.value=saved?String(saved):'';const detail=document.createElement('small');detail.textContent=`${fmtH(daily)}h detalhadas por dia`;field.append(label,input,detail);root.append(field)}if(!months.length){const empty=document.createElement('p');empty.className='helperline';empty.textContent='Ainda não há meses anteriores neste ciclo. A partir de setembro, agosto aparecerá aqui.';root.append(empty);$('saveHistory').disabled=true}else $('saveHistory').disabled=false;$('historicalSum').textContent=`Meses anteriores: ${fmtH(total)}h · Saldo geral: ${fmtH(hours())}h / 300h`}
+ function renderHolidays(){let root=$('holidayList');root.innerHTML='';const dates=Object.keys(state.holidays).sort();if(!dates.length){let e=document.createElement('div');e.className='emptymsg';e.textContent='Nenhum feriado cadastrado ainda.';root.append(e)}for(const date of dates){const el=document.createElement('span');el.className='holidaytag';const label=document.createElement('span');label.textContent=`${parse(date).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} · ${state.holidays[date]}`;const remove=document.createElement('button');remove.textContent='×';remove.setAttribute('aria-label','Remover feriado '+date);remove.onclick=()=>{delete state.holidays[date];persist();render()};el.append(label,remove);root.append(el)}
+   const national=$('nationalHolidayList');national.innerHTML='';
+   const years=new Set([internshipYear(),internshipYear()+1,parse(state.start).getFullYear(),parse(state.end).getFullYear()]);
+   const start=state.start<`${internshipYear()}-08-01`?state.start:`${internshipYear()}-08-01`;
+   const end=state.end>`${internshipYear()+1}-01-31`?state.end:`${internshipYear()+1}-01-31`;
+   const holidays=[];for(const year of years)for(const [date,name] of Object.entries(nationalHolidays(year)))if(date>=start&&date<=end)holidays.push([date,name]);
+   holidays.sort(([a],[b])=>a.localeCompare(b));
+   for(const [date,name] of holidays){const tag=document.createElement('span');tag.className='holidaytag';tag.title=`Feriado nacional · ${fmt(date)}`;tag.textContent=`🇧🇷 ${parse(date).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} · ${name}`;national.append(tag)}
+ }
+ function renderAnalysis(f){
+  let el=$('analysis');el.innerHTML='';
+  let s=document.createElement('div');s.className='helperline';
+  s.innerHTML=f.remaining===0?'Você já cumpriu as <strong>300 horas</strong> necessárias.':!f.available.length?'Não há dias úteis livres no período selecionado.':`Restam <strong>${fmtH(f.remaining)}h</strong> e <strong>${f.available.length} dias úteis disponíveis</strong> até ${fmt(state.end)}. A média necessária é <strong>${fmtH(f.required)}h</strong> por dia útil.`;
+  el.append(s);
+  let alert=document.createElement('div');alert.className='alert'+(f.possible?' good':'');
+  if(f.remaining===0)alert.textContent='🎉 Meta concluída.';
+  else if(f.overbooked)alert.textContent=`⚠️ As jornadas fixadas somam ${fmtH(f.fixedHours)}h, mas faltam apenas ${fmtH(f.remaining)}h. Reduza as jornadas fixas para fechar exatamente 300h.`;
+  else if(!f.available.length)alert.textContent='⚠️ Não existem dias úteis disponíveis neste intervalo.';
+  else if(f.possible)alert.textContent=`✓ Meta possível até ${fmt(state.end)}. O calendário mostra a jornada específica prevista para cada dia.`;
+  else alert.textContent=`⚠️ Ainda faltam ${fmtH(f.missing)}h no plano com as jornadas automáticas permitidas. Ajuste um dia manualmente ou reveja o prazo e as opções de jornada.`;
+  el.append(alert);
+  if(f.remaining>0&&f.available.length){
+    let summary=document.createElement('div');summary.className='scheduleSummary';
+    const counts=f.distribution;
+    for(const [label,count] of [['4h',counts.four],['6h',counts.six],['8h',counts.eight],['Outras',counts.other]]){
+      const item=document.createElement('div');item.className='scheduleStat';item.innerHTML=`<strong>${count}</strong><span>${label}</span>`;summary.append(item);
+    }
+    el.append(summary);
+    const distributionTable=document.createElement('table');distributionTable.className='distribution-table';distributionTable.setAttribute('aria-label','Quantidade de dias e horas por jornada planejada');distributionTable.innerHTML='<thead><tr><th>Jornada</th><th>Dias</th><th>Horas acumuladas</th></tr></thead>';
+    const body=document.createElement('tbody');let plannedDays=0;
+    for(const [label,count,hoursPerDay] of [['4 horas',counts.four,4],['6 horas',counts.six,6],['8 horas',counts.eight,8]]){const tr=document.createElement('tr');for(const value of [label,String(count),`${fmtH(count*hoursPerDay)}h`]){const td=document.createElement('td');td.textContent=value;tr.append(td)}body.append(tr);plannedDays+=count;}
+    const otherHours=Object.values(f.projection).filter(v=>v>0&&!([4,6,8].some(h=>Math.abs(h-v)<.001))).reduce((a,v)=>a+v,0);
+    if(counts.other){const tr=document.createElement('tr');for(const value of ['Outras durações',String(counts.other),`${fmtH(otherHours)}h`]){const td=document.createElement('td');td.textContent=value;tr.append(td)}body.append(tr);plannedDays+=counts.other;}
+    distributionTable.append(body);const footer=document.createElement('tfoot');const tr=document.createElement('tr');for(const value of ['Total previsto',String(plannedDays),`${fmtH(f.planned)}h`]){const td=document.createElement('td');td.textContent=value;tr.append(td)}footer.append(tr);distributionTable.append(footer);el.append(distributionTable);
+    const tableNote=document.createElement('p');tableNote.className='table-note';tableNote.textContent=f.overbooked?'Atenção: as jornadas fixadas ultrapassam as horas restantes.':f.missing>0?`Não foi possível encaixar ${fmtH(f.missing)}h até o prazo. A tabela mostra a capacidade planejada.`:'A tabela representa somente os dias ainda planejados, sem incluir as horas já realizadas. Edite qualquer dia para atualizar a distribuição.';el.append(tableNote);
+    const text=document.createElement('div');text.className='helperline';text.style.marginTop='10px';text.textContent=`Total planejado: ${fmtH(f.planned)}h · Último dia previsto: ${f.finish?fmt(f.finish):'—'}. Os dias podem ser ajustados conforme suas horas reais.`;el.append(text);
+  }
+  let list=document.createElement('div');list.className='helperline';list.style.marginTop='15px';const monthly={};
+  Object.assign(monthly,monthlyActuals());
+  const items=Object.entries(monthly).filter(([,v])=>v>0).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,5);
+  if(items.length){let title=document.createElement('strong');title.textContent='Meses com horas realizadas';list.append(title);
+    for(const [mo,v] of items){let r=document.createElement('div');r.style.cssText='display:flex;justify-content:space-between;border-bottom:1px solid #eff1f6;padding:9px 0;gap:8px';r.textContent=monthFmt(mo);let b=document.createElement('strong');b.textContent=fmtH(v)+'h';r.append(b);list.append(r)}}
+  else list.textContent='Seu histórico mensal aparecerá aqui após os primeiros registros.';el.append(list);
+ }
+
+ function renderPayments(f){
+   const actual=monthlyActuals(),scheduled={};
+   for(const [date,h] of Object.entries(f.projection))if(h>0){const month=ymdm(date);scheduled[month]=(scheduled[month]||0)+h}
+   const cycleYear=internshipYear();const keys=new Set([...Object.keys(actual),...Object.keys(scheduled)]);
+   for(let m=8;m<=12;m++)keys.add(`${cycleYear}-${pad(m)}`);
+   if(state.end>=`${cycleYear+1}-01-01`)keys.add(`${cycleYear+1}-01`);
+   const months=[...keys].filter(k=>/^\d{4}-(0[1-9]|1[0-2])$/.test(k)).sort();
+   const body=$('paymentRows'),foot=$('paymentFoot');body.innerHTML='';foot.innerHTML='';
+   let totalActual=0,totalPlanned=0;
+   for(const month of months){const a=actual[month]||0,b=scheduled[month]||0;if(!a&&!b&&month<`${cycleYear}-08`)continue;
+     totalActual+=a;totalPlanned+=b;const tr=document.createElement('tr');
+     for(const value of [monthFmt(month),`${fmtH(a)}h`,`${fmtH(b)}h`,money(a),money(b)]){const td=document.createElement('td');td.textContent=value;tr.append(td)}body.append(tr);
+   }
+   const tr=document.createElement('tr');for(const value of ['Totais separados',`${fmtH(totalActual)}h`,`${fmtH(totalPlanned)}h`,money(totalActual),money(totalPlanned)]){const td=document.createElement('td');td.textContent=value;tr.append(td)}foot.append(tr);
+ }
  let weekStart=(()=>{const d=parse(today);const day=d.getDay();d.setDate(d.getDate()-((day+6)%7));return ds(d)})();
  function renderWeek(f){
    const end=addDays(weekStart,4);$('weekRange').textContent=`${fmt(weekStart)} — ${fmt(end)}`;
